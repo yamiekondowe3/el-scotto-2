@@ -85,14 +85,66 @@ sizing   risk-based, 0.5% equity per trade
 
 ```
 mql5_ea/ElScotto_Trend_EA.mq5   the EA; demo-gated, mirrors the Python exactly
+verify_ea_vs_python.py          proves the EA matches the model before deployment
+monitor.py                      read-only forward-test monitor; logs R-multiples
 el_scotto_improved.py           faithfulness check, corrected baseline, the four changes
 el_scotto_tradeable.py          four pre-registered replacement entry signals
 el_scotto_validate.py           V1-V4 validation gates
 el_scotto_overlay.py            trend overlay vs volatility-matched gold
 common/                         shared engine: exits, filters, costs, placebo, portfolio
 ops_rehearsal.py                pre-deployment checks; places NO orders
-tests_exits.py                  exit-policy tests, incl. trail monotonicity
+tests_exits.py, tests_monitor.py   23 tests
 ```
+
+## Deployment status
+
+| Gate | State |
+|---|---|
+| `ops_rehearsal.py` | **15/15 pass** |
+| EA spec reconciled against the Python model | **pass** — 452/452 signals, trades identical (n=315, PF 1.394, E[R] +0.1920) |
+| Strategy Tester reconciliation | **outstanding** — run the tester, export deals, `python verify_ea_vs_python.py tester_deals.csv` |
+
+**Do not attach the EA to a chart until the Strategy Tester gate passes.** Part A of
+`verify_ea_vs_python.py` cannot catch differences in MT5's own indicator maths (iATR seeding,
+iMA warmup) or in fill mechanics.
+
+### Bugs this verification caught
+
+1. **The regime streak was counted in the wrong place.** The EA advanced the ATR-expansion
+   streak *after* the session/position/cap gates, so it counted "consecutive in-session bars
+   with no open position" rather than consecutive volatility-expansion bars — a different gate
+   from the validated one. Found by spec reconciliation, not by testing.
+2. **Stop distance measured from the wrong side.** A long's stop distance is measured by the
+   broker from **bid** (where the position closes), not ask. `ops_rehearsal.py` had the same bug
+   and passed for months, then failed with retcode 10016 the moment the spread widened to 39
+   points near rollover. Both are fixed.
+
+## Safety
+
+- The EA refuses to initialise on a non-demo account, and asserts the server's UTC offset
+  matches its configuration rather than assuming it — on a UTC+2/+3 broker the session window
+  would otherwise silently shift and destroy the one filter that doubled expectancy.
+- **No Python file in this repository places orders.** `tests_monitor.py` enforces that by
+  scanning source for call syntax, and the test is verified to fail on a planted violation.
+- The EA carries the ATR-collapse sizing guard, the notional cap, the skip-don't-clamp minimum
+  lot rule, the FOK filling-mode fix, a daily-loss kill switch, and reads `OrderSend` retcodes.
+
+## Pre-registered review criteria
+
+Locked before any forward data exists, so the goalposts cannot move.
+
+At ~40 trades/year a single year carries a standard error near **±0.25R** against a modelled
+**+0.087R**. **Forward testing will not establish an edge.** It establishes whether the
+automation is correct and whether real fills match the cost model.
+
+| Review at | Check |
+|---|---|
+| 2 weeks | Trades fire when the model says; fills within modelled slippage; trail monotonic |
+| 3 months | Realised E[R] within ±1 SE of +0.087R; no unmodelled cost |
+| 12 months | Cumulative R vs the modelled distribution; slippage stable |
+
+**A disappointing forward result is not a reason to retune.** That loop is what generated seven
+false positives in this work. `tests_monitor.py` asserts the expectation constants are unchanged.
 
 `el_scotto_harness.py` and `reproduce_el_scotto.py` import the upstream strategy directly. To run
 them, clone the original alongside as `el-scotto-review/`:

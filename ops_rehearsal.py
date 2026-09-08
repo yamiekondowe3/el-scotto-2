@@ -74,10 +74,17 @@ def main():
         if info and tick:
             vol = info.volume_min
             price = tick.ask
-            # stops must respect the broker's minimum distance
+            # Stops must respect the broker's minimum distance, measured from
+            # the price the position would CLOSE at -- a BUY closes at bid, so
+            # the stop must clear min_dist below BID, not below ask. Measuring
+            # from ask understates the gap by the whole spread: this check
+            # passed for months and then failed with retcode 10016 the moment
+            # the spread widened to 39 points near rollover, leaving the $0.40
+            # stop just 1 point below bid.
             min_dist = info.trade_stops_level * info.point
-            sl = price - max(min_dist * 2, 10 * info.point)
-            tp = price + max(min_dist * 2, 10 * info.point)
+            pad = max(min_dist * 2, 10 * info.point)
+            sl = tick.bid - pad
+            tp = tick.bid + pad
             req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": sym, "volume": vol,
                    "type": mt5.ORDER_TYPE_BUY, "price": price, "sl": sl, "tp": tp,
                    "deviation": 30, "magic": 20260907,

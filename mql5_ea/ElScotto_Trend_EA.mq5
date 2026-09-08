@@ -261,6 +261,42 @@ void OnTick()
    //--- trail BEFORE the position check, so an open trade is managed every bar
    UpdateTrail();
 
+   //--- INDICATORS AND THE REGIME STREAK ARE UPDATED FIRST, ON EVERY BAR.
+   //--- This ordering is load-bearing. The Python model computes the
+   //--- ATR-expansion streak continuously across the whole series
+   //--- (el_scotto_tradeable.py::entry_signals), so if the streak only
+   //--- advanced on bars that survived the session/position/cap gates it would
+   //--- count a completely different thing -- effectively "consecutive
+   //--- in-session bars with no open position", not "consecutive expansion
+   //--- bars". Every early return below must come AFTER this block.
+   double atrVals[], emaVals[], smaVals[];
+   ArraySetAsSeries(atrVals, true);
+   ArraySetAsSeries(emaVals, true);
+   ArraySetAsSeries(smaVals, true);
+   int need = ATR_SMA_Period + 2;
+   if(CopyBuffer(atrHandle, 0, 0, need, atrVals) < need) return;
+   if(CopyBuffer(emaHandle, 0, 0, 2, emaVals) < 2) return;
+   if(CopyBuffer(smaDailyHandle, 0, 0, 2, smaVals) < 2) return;
+
+   double atrNow = atrVals[1];
+   double ema    = emaVals[1];
+   double trend  = smaVals[1];              // last CLOSED daily bar's SMA
+
+   //--- ATR-expansion gate: ATR(14) > SMA50(ATR14), theirs, KEPT.
+   //--- Dropping it made results worse (+0.0307 vs +0.0605), contradicting
+   //--- our prior from the volatility-regime work.
+   //--- Warmup mirrors Python: a bar with no valid ATR resets the streak,
+   //--- matching the `None` handling in regime_filter.atr_expansion_gate.
+   if(atrNow <= 0)
+   {
+      regimeStreak = 0;
+      return;
+   }
+   double atrSum = 0.0;
+   for(int i = 1; i <= ATR_SMA_Period; i++) atrSum += atrVals[i];
+   double atrSma = atrSum / ATR_SMA_Period;
+   if(atrNow > atrSma) regimeStreak++; else regimeStreak = 0;
+
    //--- daily rollover, counters and the loss kill switch
    MqlDateTime dt;
    datetime nowSrv = TimeCurrent();
@@ -289,28 +325,7 @@ void OnTick()
    if(utcHour > 23) utcHour -= 24;
    if(utcHour < Session_Start_Hour_UTC || utcHour >= Session_End_Hour_UTC) return;
 
-   //--- indicators, all read from the LAST CLOSED bar (index 1)
-   double atrVals[], emaVals[], smaVals[];
-   ArraySetAsSeries(atrVals, true);
-   ArraySetAsSeries(emaVals, true);
-   ArraySetAsSeries(smaVals, true);
-   int need = ATR_SMA_Period + 2;
-   if(CopyBuffer(atrHandle, 0, 0, need, atrVals) < need) return;
-   if(CopyBuffer(emaHandle, 0, 0, 2, emaVals) < 2) return;
-   if(CopyBuffer(smaDailyHandle, 0, 0, 2, smaVals) < 2) return;
-
-   double atrNow = atrVals[1];
-   double ema    = emaVals[1];
-   double trend  = smaVals[1];              // last CLOSED daily bar's SMA
-   if(atrNow <= 0 || ema <= 0 || trend <= 0) return;
-
-   //--- ATR-expansion gate: ATR(14) > SMA50(ATR14), theirs, KEPT.
-   //--- Dropping it made results worse (+0.0307 vs +0.0605), contradicting
-   //--- our prior from the volatility-regime work.
-   double atrSum = 0.0;
-   for(int i = 1; i <= ATR_SMA_Period; i++) atrSum += atrVals[i];
-   double atrSma = atrSum / ATR_SMA_Period;
-   if(atrNow > atrSma) regimeStreak++; else regimeStreak = 0;
+   if(ema <= 0 || trend <= 0) return;
    if(regimeStreak < Regime_Confirm_Bars) return;
 
    double closeNow = iClose(_Symbol, PERIOD_CURRENT, 1);
@@ -342,19 +357,25 @@ void OnTick()
    //--- entry ATR is persisted here so the trail survives a terminal restart
    req.comment      = StringFormat("els atr=%.5f", atrNow);
 
+   //--- Stop distance is measured by the broker from the price the position
+   //--- would CLOSE at, not the price it opens at: a BUY closes at bid, a SELL
+   //--- at ask. Checking against the open side instead understates the distance
+   //--- by the whole spread. ops_rehearsal.py had exactly this bug and it only
+   //--- surfaced when the spread widened to 39 points near rollover -- its
+   //--- $0.40 stop below ask left 1 point above bid and was rejected 10016.
    double entryPrice, stop;
    if(longSignal)
    {
       entryPrice = ask;
       stop = NormalizeDouble(entryPrice - Stop_ATR_Mult * atrNow, digits);
-      if((entryPrice - stop) < minDist) return;   // would be rejected 10016
+      if((bid - stop) < minDist) return;          // would be rejected 10016
       req.type = ORDER_TYPE_BUY;
    }
    else
    {
       entryPrice = bid;
       stop = NormalizeDouble(entryPrice + Stop_ATR_Mult * atrNow, digits);
-      if((stop - entryPrice) < minDist) return;
+      if((stop - ask) < minDist) return;
       req.type = ORDER_TYPE_SELL;
    }
 
