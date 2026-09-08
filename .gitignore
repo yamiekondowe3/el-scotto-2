@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data_cache/
+data_etf/
+data_binance/
+el-scotto-review/
+*.log
+.env
+*_results.json

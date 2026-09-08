@@ -1,0 +1,6 @@
+MetaTrader5>=5.0.45
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+pyarrow>=12.0
+pytest>=7.0
