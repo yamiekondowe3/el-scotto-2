@@ -1,210 +1,227 @@
-# el-scotto-2
+# el-scotto-2
+
+A corrected, independently re-validated version of the **XAUUSD_LOWFREQ v2** gold strategy from
+[Ngaakudzwe2/el-scotto](https://github.com/Ngaakudzwe2/el-scotto), plus the MT5 Expert Advisor
+that runs it and the full test programme that assessed it.
+
+## Read this before using anything here
+
+**This strategy has no demonstrated edge, and this repository does not claim one.** It is
+published because the *negative* results are reproducible and specific, and because the
+corrections and the trade-management findings are useful on their own.
+
+The changes made here improved expectancy substantially â€” from **âˆ’0.0055R to +0.1433R** â€” but
+controls show the improvement comes from generic trade management, not from the entry signal.
+Against random entries with the same exits, session and costs, the strategy scores **z = +0.37**
+on data it has never seen. Expectancy on that unseen window is **+0.0394R with p = 0.607**.
+
+The EA is **demo-only by default** and refuses to initialise on a live account.
+
+## What was wrong with the original
+
+All three of these flatter the reported results, and all three are fixed here.
+
+| Defect | Location | Effect |
+|---|---|---|
+| **Costs under-charged ~50%** | `entries_v2.py:225` / `:187` | `spread/2 + slippage` charged on entry, only `slippage` on exit. Round trip is $0.30, not the $0.40 the comment claims. Stop fills assumed exact |
+| **Fixed-notional sizing** | `entries_v2.py:228` | `qty = notional / fill` makes per-trade risk proportional to ATR, then each `pnl/notional` is treated as an iid return |
+| **Pullback has no lower bound** | `entries_v2.py:218` | A bar that never approached the EMA still qualifies as a "pullback". The documented intent is not what the code does |
+| **No exit management** | `entries_v2.py:231` | `sl`/`tp` written once, never updated. No trail, breakeven, partial or time stop |
+| **Grid search absent from the repo** | `lowfreq_v2_eval.py:148` | `PARAM_GRID` is referenced once, inside a `--benchmark` branch, to estimate runtime. The published numbers are not reproducible from what ships |
+
+**Correcting the cost accounting alone flips the original's training window from profitable to
+unprofitable** (PF 1.032 â†’ 0.990).
+
+## What changed
+
+**Subtractions:** the profit target, all hours outside 12:00â€“16:00 UTC, fixed-notional sizing.
+**Additions:** a 3Ã—ATR chandelier trail, the pullback lower bound, risk-based sizing.
+**Unchanged:** their daily-SMA trend regime and their ATR-expansion gate.
+
+| Change | Effect on E[R] |
+|---|---|
+| Remove the profit target (2Ã—ATR stop, no target, 3Ã—ATR trail) | âˆ’0.0055 â†’ **+0.0605** |
+| Trade only the NY session, 12:00â€“16:00 UTC | +0.0605 â†’ **+0.1209** |
+| Implement the pullback as documented (low must dip *through* the EMA) | PF 1.236 â†’ **1.394** |
+| Drop the ATR gate | **+0.0307 â€” worse.** Their gate helps; it stays |
+
+Removing the target drops win rate from 50% to 35% while raising profit factor â€” the
+trend-following signature. It addresses a diagnosable failure: the original captured **11% of a
+151% gold move**.
+
+## What the validation showed
+
+| Gate | Result | |
+|---|---|---|
+| Backward OOS 2011â€“2018 (7 years never seen) | PF 1.073, E[R] +0.0394 | **pass** â€” the original *lost* money here |
+| Random-entry placebo, unseen window | **z = +0.37** | **fail** |
+| Cross-section, 72 markets, per-instrument costs | 25/72 positive (was 14/72); gold at 97th percentile | **fail** |
+| Trend overlay vs vol-matched gold, bootstrap CI on Î”Sharpe | **[âˆ’0.32, +0.81]** | **fail** â€” straddles zero |
+
+Four replacement entry signals were also pre-registered and tested (Donchian breakout, corrected
+pullback, momentum persistence, and an always-in control). **None beat random entry timing on
+unseen data**, and the control that used *no entry timing at all* scored the highest z of the
+five.
+
+Full write-ups: [reports/EL_SCOTTO_IMPROVED.md](reports/EL_SCOTTO_IMPROVED.md) and
+[reports/EL_SCOTTO_ASSESSMENT.md](reports/EL_SCOTTO_ASSESSMENT.md).
+
+## The locked configuration
+
+Parameters are **locked and must not be optimised.** Every optimisation pass in this project
+produced a result that vanished out of sample. Re-tuning a signal already shown to be
+indistinguishable from noise fits the noise harder.
+
+```
+entry    A2_true_pullback  low dips through EMA21, close recovers above it
+regime   H1 close vs daily SMA50
+gate     ATR(14) > SMA50(ATR14), 3 consecutive bars
+session  12:00-16:00 UTC  (ny_open)
+exit     2xATR stop, NO target, 3xATR chandelier trail
+sizing   risk-based, 0.5% equity per trade
+```
+
+## Layout
+
+```
+mql5_ea/ElScotto_Trend_EA.mq5   the EA; demo-gated, mirrors the Python exactly
+verify_ea_vs_python.py          proves the EA matches the model before deployment
+monitor.py                      read-only forward-test monitor; logs R-multiples
+el_scotto_improved.py           faithfulness check, corrected baseline, the four changes
+el_scotto_tradeable.py          four pre-registered replacement entry signals
+el_scotto_validate.py           V1-V4 validation gates
+el_scotto_overlay.py            trend overlay vs volatility-matched gold
+common/                         shared engine: exits, filters, costs, placebo, portfolio
+ops_rehearsal.py                pre-deployment checks; places NO orders
+tests_exits.py, tests_monitor.py   23 tests
+```
+
+## The harness
 
-A corrected, independently re-validated version of the **XAUUSD_LOWFREQ v2** gold strategy from
-[Ngaakudzwe2/el-scotto](https://github.com/Ngaakudzwe2/el-scotto), plus the MT5 Expert Advisor
-that runs it and the full test programme that assessed it.
+The validation machinery used here is packaged separately and reusable:
+**https://github.com/yamiekondowe3/trading-harness**
 
-## Read this before using anything here
-
-**This strategy has no demonstrated edge, and this repository does not claim one.** It is
-published because the *negative* results are reproducible and specific, and because the
-corrections and the trade-management findings are useful on their own.
-
-The changes made here improved expectancy substantially — from **−0.0055R to +0.1433R** — but
-controls show the improvement comes from generic trade management, not from the entry signal.
-Against random entries with the same exits, session and costs, the strategy scores **z = +0.37**
-on data it has never seen. Expectancy on that unseen window is **+0.0394R with p = 0.607**.
-
-The EA is **demo-only by default** and refuses to initialise on a live account.
-
-## What was wrong with the original
-
-All three of these flatter the reported results, and all three are fixed here.
-
-| Defect | Location | Effect |
-|---|---|---|
-| **Costs under-charged ~50%** | `entries_v2.py:225` / `:187` | `spread/2 + slippage` charged on entry, only `slippage` on exit. Round trip is $0.30, not the $0.40 the comment claims. Stop fills assumed exact |
-| **Fixed-notional sizing** | `entries_v2.py:228` | `qty = notional / fill` makes per-trade risk proportional to ATR, then each `pnl/notional` is treated as an iid return |
-| **Pullback has no lower bound** | `entries_v2.py:218` | A bar that never approached the EMA still qualifies as a "pullback". The documented intent is not what the code does |
-| **No exit management** | `entries_v2.py:231` | `sl`/`tp` written once, never updated. No trail, breakeven, partial or time stop |
-| **Grid search absent from the repo** | `lowfreq_v2_eval.py:148` | `PARAM_GRID` is referenced once, inside a `--benchmark` branch, to estimate runtime. The published numbers are not reproducible from what ships |
-
-**Correcting the cost accounting alone flips the original's training window from profitable to
-unprofitable** (PF 1.032 → 0.990).
-
-## What changed
-
-**Subtractions:** the profit target, all hours outside 12:00–16:00 UTC, fixed-notional sizing.
-**Additions:** a 3×ATR chandelier trail, the pullback lower bound, risk-based sizing.
-**Unchanged:** their daily-SMA trend regime and their ATR-expansion gate.
-
-| Change | Effect on E[R] |
-|---|---|
-| Remove the profit target (2×ATR stop, no target, 3×ATR trail) | −0.0055 → **+0.0605** |
-| Trade only the NY session, 12:00–16:00 UTC | +0.0605 → **+0.1209** |
-| Implement the pullback as documented (low must dip *through* the EMA) | PF 1.236 → **1.394** |
-| Drop the ATR gate | **+0.0307 — worse.** Their gate helps; it stays |
-
-Removing the target drops win rate from 50% to 35% while raising profit factor — the
-trend-following signature. It addresses a diagnosable failure: the original captured **11% of a
-151% gold move**.
-
-## What the validation showed
-
-| Gate | Result | |
-|---|---|---|
-| Backward OOS 2011–2018 (7 years never seen) | PF 1.073, E[R] +0.0394 | **pass** — the original *lost* money here |
-| Random-entry placebo, unseen window | **z = +0.37** | **fail** |
-| Cross-section, 72 markets, per-instrument costs | 25/72 positive (was 14/72); gold at 97th percentile | **fail** |
-| Trend overlay vs vol-matched gold, bootstrap CI on ΔSharpe | **[−0.32, +0.81]** | **fail** — straddles zero |
-
-Four replacement entry signals were also pre-registered and tested (Donchian breakout, corrected
-pullback, momentum persistence, and an always-in control). **None beat random entry timing on
-unseen data**, and the control that used *no entry timing at all* scored the highest z of the
-five.
-
-Full write-ups: [reports/EL_SCOTTO_IMPROVED.md](reports/EL_SCOTTO_IMPROVED.md) and
-[reports/EL_SCOTTO_ASSESSMENT.md](reports/EL_SCOTTO_ASSESSMENT.md).
-
-## The locked configuration
-
-Parameters are **locked and must not be optimised.** Every optimisation pass in this project
-produced a result that vanished out of sample. Re-tuning a signal already shown to be
-indistinguishable from noise fits the noise harder.
-
-```
-entry    A2_true_pullback  low dips through EMA21, close recovers above it
-regime   H1 close vs daily SMA50
-gate     ATR(14) > SMA50(ATR14), 3 consecutive bars
-session  12:00-16:00 UTC  (ny_open)
-exit     2xATR stop, NO target, 3xATR chandelier trail
-sizing   risk-based, 0.5% equity per trade
-```
-
-## Layout
-
-```
-mql5_ea/ElScotto_Trend_EA.mq5   the EA; demo-gated, mirrors the Python exactly
-verify_ea_vs_python.py          proves the EA matches the model before deployment
-monitor.py                      read-only forward-test monitor; logs R-multiples
-el_scotto_improved.py           faithfulness check, corrected baseline, the four changes
-el_scotto_tradeable.py          four pre-registered replacement entry signals
-el_scotto_validate.py           V1-V4 validation gates
-el_scotto_overlay.py            trend overlay vs volatility-matched gold
-common/                         shared engine: exits, filters, costs, placebo, portfolio
-ops_rehearsal.py                pre-deployment checks; places NO orders
-tests_exits.py, tests_monitor.py   23 tests
-```
-
-## Deployment status
-
-| Gate | State |
-|---|---|
-| `ops_rehearsal.py` | **15/15 pass** |
-| Part A � EA spec vs Python model | **PASS** � 452/452 signals, trades identical |
-| Part B � Strategy Tester vs Python model | **PASS** � 320/320 tester entries matched (100%) |
-| Per-bar indicator trace | **PASS** � 100.00% agreement, 0 disagreeing bars of 44,620 |
-
-Strategy Tester, XAUUSD H1 2018-01-01 to 2025-07-31, $25,000 deposit, 0.5% risk:
-
-| | Tester | Python model |
-|---|---|---|
-| Trades | 320 | 321 |
-| E[R] | **+0.1926** | **+0.1833** |
-| Profit factor | 1.377 | 1.376 |
-| Win rate | 40.0% | 40.2% |
-| Net | +$7,704.88 | � |
-| Max drawdown | 5.74% balance / 9.76% equity | � |
-
-The EA and the backtest are the same strategy. **That is all this establishes.**
-It says nothing about whether the strategy has an edge -- see the verdict in
-`reports/EL_SCOTTO_IMPROVED.md`, which is unchanged: the entry signal is
-statistically indistinguishable from random timing out of sample (z = +0.37).
-
-### Bugs this verification caught
-
-Five, none of which any backtest could have surfaced:
-
-1. **MT5's `iATR` is an SMA of True Range, not Wilder's smoothed average.** It ran 7-16% high on
-   44,607 of 44,620 bars. ATR drives the stop, the trail, the position size *and* the regime
-   gate, so the EA was trading ~10% wider stops and ~10% smaller positions than anything
-   validated. Replaced with `WilderATR()`.
-2. **The regime streak was counted in the wrong place** � after the session/position/cap gates,
-   so it counted "consecutive in-session bars with no open position" rather than consecutive
-   volatility-expansion bars.
-3. **The session was gated on the fill bar, not the signal bar.** The EA traded signals from
-   11:00-14:59 while the validated window is 12:00-15:59.
-4. **Stop distance was measured from the wrong side.** A long's stop distance is measured from
-   **bid**; `ops_rehearsal.py` had the same bug and passed for months, then failed with retcode
-   10016 once the spread widened to 39 points near rollover.
-5. **The trace file was written to each tester agent's private sandbox.** `FILE_COMMON` was
-   needed; without it the file is effectively unfindable.
-
-The per-bar trace (`Debug_Log_Signals` + `compare_trace.py`) is what found #1, after four
-rounds of inference from trade lists alone produced four wrong hypotheses. Reach for it first
-next time.
-
-## Safety
-
-- The EA refuses to initialise on a non-demo account, and asserts the server's UTC offset
-  matches its configuration rather than assuming it — on a UTC+2/+3 broker the session window
-  would otherwise silently shift and destroy the one filter that doubled expectancy.
-- **No Python file in this repository places orders.** `tests_monitor.py` enforces that by
-  scanning source for call syntax, and the test is verified to fail on a planted violation.
-- The EA carries the ATR-collapse sizing guard, the notional cap, the skip-don't-clamp minimum
-  lot rule, the FOK filling-mode fix, a daily-loss kill switch, and reads `OrderSend` retcodes.
-
-## Pre-registered review criteria
-
-Locked before any forward data exists, so the goalposts cannot move.
-
-At ~40 trades/year a single year carries a standard error near **±0.25R** against a modelled
-**+0.087R**. **Forward testing will not establish an edge.** It establishes whether the
-automation is correct and whether real fills match the cost model.
-
-| Review at | Check |
-|---|---|
-| 2 weeks | Trades fire when the model says; fills within modelled slippage; trail monotonic |
-| 3 months | Realised E[R] within ±1 SE of +0.087R; no unmodelled cost |
-| 12 months | Cumulative R vs the modelled distribution; slippage stable |
-
-**A disappointing forward result is not a reason to retune.** That loop is what generated seven
-false positives in this work. `tests_monitor.py` asserts the expectation constants are unchanged.
-
-`el_scotto_harness.py` and `reproduce_el_scotto.py` import the upstream strategy directly. To run
-them, clone the original alongside as `el-scotto-review/`:
-
-```
-git clone https://github.com/Ngaakudzwe2/el-scotto.git el-scotto-review
+```python
+from harness import validate
+validate(my_signals, symbol="XAUUSD",
+         select=("2018-01-01","2025-07-31"),
+         unseen=("2011-01-01","2017-12-31"),
+         exit_policy="E1_trail", session="ny_open")
 ```
 
-## Running it
+Five gates - unseen window, random-entry placebo, cross-section, buy-and-hold, cost sensitivity -
+with the recurring bugs of this project encoded as structural guardrails rather than warnings.
+This strategy's own verdict through it: `G1 PASS  G2 FAIL  G3 PASS  G4 FAIL  G5 PASS`.
 
-```bash
-pip install -r requirements.txt
-python el_scotto_improved.py     # baseline + the four changes
-python el_scotto_validate.py     # validation gates
-pytest tests_exits.py
-```
-
-The EA needs `data_cache/XAUUSD/H1/` populated via `common/data_fetch.py` against a running MT5
-terminal. Run `python ops_rehearsal.py` before enabling it — it validates the order path with
-`order_check()` without placing anything, and has already caught two deployment-killing bugs
-(a hardcoded FOK/IOC filling mode that would have had every order rejected, and an ATR-collapse
-sizing defect worth −18R to −21R per trade).
-
-## Credit
-
-The original strategy, data pipeline and evaluation are by
-[Ngaakudzwe2](https://github.com/Ngaakudzwe2). Their code reproduces its published results
-exactly — the holdout matched to every decimal — and their README leads with the
-training/holdout contradiction rather than burying it, which is more discipline than most retail
-strategy work. Their own stated conclusion, *"promising and worth continued forward-testing, not
-a proven edge ready for capital,"* is correct; this repository supports the cautious half of it.
-
-The failure here is not sloppiness. A real edge is genuinely hard to find.
-
-## Licence
-
-MIT for the code in this repository. The upstream strategy is under its own licence; this
-repository contains no upstream source.
+## Deployment status
+
+| Gate | State |
+|---|---|
+| `ops_rehearsal.py` | **15/15 pass** |
+| Part A — EA spec vs Python model | **PASS** — 452/452 signals, trades identical |
+| Part B — Strategy Tester vs Python model | **PASS** — 320/320 tester entries matched (100%) |
+| Per-bar indicator trace | **PASS** — 100.00% agreement, 0 disagreeing bars of 44,620 |
+
+Strategy Tester, XAUUSD H1 2018-01-01 to 2025-07-31, $25,000 deposit, 0.5% risk:
+
+| | Tester | Python model |
+|---|---|---|
+| Trades | 320 | 321 |
+| E[R] | **+0.1926** | **+0.1833** |
+| Profit factor | 1.377 | 1.376 |
+| Win rate | 40.0% | 40.2% |
+| Net | +$7,704.88 | — |
+| Max drawdown | 5.74% balance / 9.76% equity | — |
+
+The EA and the backtest are the same strategy. **That is all this establishes.**
+It says nothing about whether the strategy has an edge -- see the verdict in
+`reports/EL_SCOTTO_IMPROVED.md`, which is unchanged: the entry signal is
+statistically indistinguishable from random timing out of sample (z = +0.37).
+
+### Bugs this verification caught
+
+Five, none of which any backtest could have surfaced:
+
+1. **MT5's `iATR` is an SMA of True Range, not Wilder's smoothed average.** It ran 7-16% high on
+   44,607 of 44,620 bars. ATR drives the stop, the trail, the position size *and* the regime
+   gate, so the EA was trading ~10% wider stops and ~10% smaller positions than anything
+   validated. Replaced with `WilderATR()`.
+2. **The regime streak was counted in the wrong place** — after the session/position/cap gates,
+   so it counted "consecutive in-session bars with no open position" rather than consecutive
+   volatility-expansion bars.
+3. **The session was gated on the fill bar, not the signal bar.** The EA traded signals from
+   11:00-14:59 while the validated window is 12:00-15:59.
+4. **Stop distance was measured from the wrong side.** A long's stop distance is measured from
+   **bid**; `ops_rehearsal.py` had the same bug and passed for months, then failed with retcode
+   10016 once the spread widened to 39 points near rollover.
+5. **The trace file was written to each tester agent's private sandbox.** `FILE_COMMON` was
+   needed; without it the file is effectively unfindable.
+
+The per-bar trace (`Debug_Log_Signals` + `compare_trace.py`) is what found #1, after four
+rounds of inference from trade lists alone produced four wrong hypotheses. Reach for it first
+next time.
+
+## Safety
+
+- The EA refuses to initialise on a non-demo account, and asserts the server's UTC offset
+  matches its configuration rather than assuming it â€” on a UTC+2/+3 broker the session window
+  would otherwise silently shift and destroy the one filter that doubled expectancy.
+- **No Python file in this repository places orders.** `tests_monitor.py` enforces that by
+  scanning source for call syntax, and the test is verified to fail on a planted violation.
+- The EA carries the ATR-collapse sizing guard, the notional cap, the skip-don't-clamp minimum
+  lot rule, the FOK filling-mode fix, a daily-loss kill switch, and reads `OrderSend` retcodes.
+
+## Pre-registered review criteria
+
+Locked before any forward data exists, so the goalposts cannot move.
+
+At ~40 trades/year a single year carries a standard error near **Â±0.25R** against a modelled
+**+0.087R**. **Forward testing will not establish an edge.** It establishes whether the
+automation is correct and whether real fills match the cost model.
+
+| Review at | Check |
+|---|---|
+| 2 weeks | Trades fire when the model says; fills within modelled slippage; trail monotonic |
+| 3 months | Realised E[R] within Â±1 SE of +0.087R; no unmodelled cost |
+| 12 months | Cumulative R vs the modelled distribution; slippage stable |
+
+**A disappointing forward result is not a reason to retune.** That loop is what generated seven
+false positives in this work. `tests_monitor.py` asserts the expectation constants are unchanged.
+
+`el_scotto_harness.py` and `reproduce_el_scotto.py` import the upstream strategy directly. To run
+them, clone the original alongside as `el-scotto-review/`:
+
+```
+git clone https://github.com/Ngaakudzwe2/el-scotto.git el-scotto-review
+```
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+python el_scotto_improved.py     # baseline + the four changes
+python el_scotto_validate.py     # validation gates
+pytest tests_exits.py
+```
+
+The EA needs `data_cache/XAUUSD/H1/` populated via `common/data_fetch.py` against a running MT5
+terminal. Run `python ops_rehearsal.py` before enabling it â€” it validates the order path with
+`order_check()` without placing anything, and has already caught two deployment-killing bugs
+(a hardcoded FOK/IOC filling mode that would have had every order rejected, and an ATR-collapse
+sizing defect worth âˆ’18R to âˆ’21R per trade).
+
+## Credit
+
+The original strategy, data pipeline and evaluation are by
+[Ngaakudzwe2](https://github.com/Ngaakudzwe2). Their code reproduces its published results
+exactly â€” the holdout matched to every decimal â€” and their README leads with the
+training/holdout contradiction rather than burying it, which is more discipline than most retail
+strategy work. Their own stated conclusion, *"promising and worth continued forward-testing, not
+a proven edge ready for capital,"* is correct; this repository supports the cautious half of it.
+
+The failure here is not sloppiness. A real edge is genuinely hard to find.
+
+## Licence
+
+MIT for the code in this repository. The upstream strategy is under its own licence; this
+repository contains no upstream source.
