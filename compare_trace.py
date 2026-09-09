@@ -45,7 +45,14 @@ def main():
     py["ema"] = df["close"].ewm(span=21, adjust=False).mean().values
     d = df["close"].resample("1D").last().dropna().rolling(50).mean().shift(1)
     py["trend_sma"] = d.reindex(df.index.normalize()).values
-    py["side"] = entry_signals(df, "A2_true_pullback")["side"].values
+    # The model emits signals for ALL hours and run() masks them at trade time;
+    # the EA masks inside OnTick. Comparing them raw comes out at 302 vs 1794
+    # purely from that asymmetry -- the same apples-to-oranges trap that made
+    # the entry/exit and fill-bar comparisons look like logic bugs.
+    from common.filters import named_session_mask
+    sides = entry_signals(df, "A2_true_pullback")["side"].to_numpy().copy()
+    sides[~named_session_mask(df.index, "ny_open").to_numpy()] = 0
+    py["side"] = sides
 
     j = ea.join(py, how="inner", rsuffix="_py")
     print(f"overlapping bars: {len(j)}\n")
