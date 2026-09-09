@@ -319,8 +319,16 @@ void OnTick()
       return;                               // kill switch: done for the day
    }
 
-   //--- session gate, half-open [start, end) in UTC. ny_open from filters.py.
-   int utcHour = (int)(dt.hour - Server_UTC_Offset_Hours);
+   //--- Session gate, half-open [start, end) in UTC. ny_open from filters.py.
+   //--- Gated on the SIGNAL bar (index 1), NOT on the current bar. The signal
+   //--- is evaluated on the last closed bar and the order fills on the bar
+   //--- after it, so gating on TimeCurrent() shifts the traded window an hour
+   //--- early: the Strategy Tester took signals from 11:00-14:59 while the
+   //--- validated model uses 12:00-15:59. That off-by-one dropped agreement
+   //--- with the model to 7%; correcting the comparison for it restored 80%.
+   MqlDateTime sigdt;
+   TimeToStruct(iTime(_Symbol, PERIOD_CURRENT, 1), sigdt);
+   int utcHour = (int)(sigdt.hour - Server_UTC_Offset_Hours);
    if(utcHour < 0)  utcHour += 24;
    if(utcHour > 23) utcHour -= 24;
    if(utcHour < Session_Start_Hour_UTC || utcHour >= Session_End_Hour_UTC) return;

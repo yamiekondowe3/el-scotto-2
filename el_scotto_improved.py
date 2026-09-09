@@ -147,7 +147,13 @@ def run(df, sig, policy: ExitPolicy, session=None, risk_based=True,
             if pos.remaining <= 1e-9:
                 trades.append({"r": pos.realized_pnl / pos.risk_amount,
                                "pnl": pos.realized_pnl, "side": pos.side,
-                               "ts": idx[i], "bars": pos.bars_held})
+                               # `ts` is the EXIT bar. entry_ts is recorded
+                               # separately: comparing tester ENTRY times against
+                               # this field showed 6% agreement and looked like a
+                               # logic bug, when it was only comparing entries to
+                               # exits.
+                               "ts": idx[i], "entry_ts": pos.entry_ts,
+                               "bars": pos.bars_held})
                 pos = None
         if pos is not None or side_a[i] == 0 or not ok_session[i]:
             continue

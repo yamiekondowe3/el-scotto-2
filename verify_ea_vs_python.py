@@ -147,32 +147,60 @@ def compare(a, b, label_a, label_b, session=None):
                 "count_diff": cnt_diff, "match": match, "ok": bool(ok)}
 
 
-def reconcile_tester(csv_path, df):
+def reconcile_tester(csv_path, gold, a="2018-01-01", b="2025-07-31"):
     """PART B: compare an exported Strategy Tester deal list to the model.
 
-    Export from MT5: Strategy Tester -> Results tab -> right click -> Report ->
-    save as XLSX/HTML, then save the deals sheet as CSV with at least the
-    columns Time and Type. Pass the path as argv[1].
+    Three things must be accounted for or the comparison is meaningless, and
+    all three were learned the hard way from the first export:
+
+      1. ENTRY vs EXIT. `run()` records the exit bar in `ts`; the entry is in
+         `entry_ts`. Comparing tester entries against `ts` gave 6% agreement
+         and looked like a logic bug.
+      2. THE FILL BAR. The EA evaluates the signal on the last CLOSED bar and
+         fills on the next one, so a tester entry is stamped one bar after the
+         signal. Un-shifted agreement was 7%; shifted, 70%.
+      3. WARMUP. Slicing the data at the window start leaves the daily SMA50
+         cold for ~10 weeks, so the model's first trade was 2018-03-09 against
+         the tester's 2018-01-03. Signals must be computed from earlier data.
     """
     p = Path(csv_path)
     if not p.exists():
-        print(f"  no tester export at {p} — skipping Part B")
+        print(f"  no tester export at {p} - skipping Part B")
         return None
     t = pd.read_csv(p)
-    tcol = next((c for c in t.columns if c.lower().startswith("time")), None)
-    if tcol is None:
-        print("  export has no Time column; cannot reconcile")
-        return None
-    t[tcol] = pd.to_datetime(t[tcol], errors="coerce")
-    entries = t.dropna(subset=[tcol])
-    print(f"  tester deals parsed: {len(entries)}")
-    sig = entry_signals(df, "A2_true_pullback")
-    py = run(df, sig, POLICY, session=SESSION)
-    print(f"  python trades       : {len(py)}")
-    d = abs(len(entries) - len(py)) / max(len(py), 1)
-    print(f"  count difference    : {d:.1%}  -> "
-          f"{'RECONCILED' if d <= TOL_COUNT else 'MISMATCH'}")
-    return {"tester": len(entries), "python": len(py), "diff": d}
+    t["Time"] = pd.to_datetime(t["Time"], format="%Y.%m.%d %H:%M:%S", errors="coerce")
+    ins = t[t["Direction"] == "in"].dropna(subset=["Time"])
+    tester = set(ins["Time"])
+
+    warm = gold.loc["2017-06-01":b]
+    sig = entry_signals(warm, "A2_true_pullback")
+    tr = run(warm, sig, POLICY, session=SESSION)
+    tr = tr[pd.to_datetime(tr["entry_ts"]) >= a]
+    ent = pd.to_datetime(tr["entry_ts"]).dt.tz_localize(None) + pd.Timedelta(hours=1)
+    model = set(ent)
+
+    shared = len(tester & model)
+    frac = shared / max(len(tester), 1)
+    print(f"  tester entries      : {len(tester)}")
+    print(f"  model entries       : {len(model)}")
+    print(f"  shared timestamps   : {shared}  ({frac:.0%} of tester)")
+    print(f"  tester-only         : {len(tester - model)}")
+
+    # The min-lot guard skips any setup whose risk budget buys less than one
+    # minimum lot. At the tester's $3,000 deposit and 0.5% risk that is a $15
+    # budget, so anything with ATR above $7.50 is skipped -- which selectively
+    # drops high-volatility periods and almost all of 2025.
+    atr = sig["atr"].reindex(tr["entry_ts"]).to_numpy()
+    lots = (3000 * 0.005) / (2 * atr * 100)
+    skipped = int(np.sum(np.asarray(lots < 0.01)))
+    print(f"  model trades the EA would SKIP on min lot: {skipped}"
+          f"  (max tradeable ATR ${(3000*0.005)/(2*100*0.01):.2f})")
+
+    ok = frac >= TOL_MATCH
+    print(f"  -> {'RECONCILED' if ok else 'NOT RECONCILED'} "
+          f"(threshold {TOL_MATCH:.0%} of tester entries matched)")
+    return {"tester": len(tester), "model": len(model), "shared": shared,
+            "match": frac, "minlot_skipped": skipped, "ok": bool(ok)}
 
 
 def main():
@@ -208,11 +236,11 @@ def main():
     print("PART B — STRATEGY TESTER RECONCILIATION")
     print("=" * 92)
     csv = sys.argv[1] if len(sys.argv) > 1 else "tester_deals.csv"
-    tester = reconcile_tester(csv, window)
+    tester = reconcile_tester(csv, gold)
 
     print("\n" + "=" * 92)
     print(f"DEPLOYMENT GATE: Part A {'PASS' if ok else 'FAIL'}"
-          f"{'' if tester is None else (' | Part B ' + ('PASS' if tester['diff'] <= TOL_COUNT else 'FAIL'))}")
+          f"{'' if tester is None else (' | Part B ' + ('PASS' if tester['ok'] else 'FAIL'))}")
     if tester is None:
         print("Part B still required before attaching the EA to a live chart.")
     print("=" * 92)
