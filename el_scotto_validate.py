@@ -53,7 +53,8 @@ SEED = 20260908
 N_PLACEBO = 200
 
 
-def placebo(df, sig, n_target, long_ratio, n_runs=N_PLACEBO, seed=SEED):
+def placebo(df, sig, n_target, long_ratio, n_runs=N_PLACEBO, seed=SEED,
+            half_spread=None, slip=None):
     """Same trade count, direction mix, exits, costs and sizing; entry TIMING
     randomised over bars that were eligible (warm indicators, in session).
 
@@ -74,7 +75,12 @@ def placebo(df, sig, n_target, long_ratio, n_runs=N_PLACEBO, seed=SEED):
         s = pd.DataFrame({"side": 0, "atr": atr_a}, index=df.index)
         sides = np.where(rng.random(n_target) < long_ratio, 1, -1)
         s.iloc[picks, s.columns.get_loc("side")] = sides
-        r = run(df, s, POLICY, session=SESSION)
+        # Costs MUST match the strategy run being compared against. Charging
+        # gold's spread to a placebo on EURUSD produced random E[R] of -114.99
+        # and a meaningless z of +27; the control has to be costed like the
+        # thing it is controlling for.
+        r = run(df, s, POLICY, session=SESSION,
+                half_spread=half_spread, slip=slip)
         st = stats(r, years_of(df))
         if st:
             out.append(st["er"])
