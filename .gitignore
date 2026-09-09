@@ -9,3 +9,5 @@ el-scotto-review/
 *.log
 .env
 *_results.json
+
+reports/elscotto_trace_*.csv

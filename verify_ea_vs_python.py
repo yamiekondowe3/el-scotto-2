@@ -147,7 +147,8 @@ def compare(a, b, label_a, label_b, session=None):
                 "count_diff": cnt_diff, "match": match, "ok": bool(ok)}
 
 
-def reconcile_tester(csv_path, gold, a="2018-01-01", b="2025-07-31"):
+def reconcile_tester(csv_path, gold, a="2018-01-01", b="2025-07-31",
+                     deposit=25_000.0):
     """PART B: compare an exported Strategy Tester deal list to the model.
 
     Three things must be accounted for or the comparison is meaningless, and
@@ -191,10 +192,11 @@ def reconcile_tester(csv_path, gold, a="2018-01-01", b="2025-07-31"):
     # budget, so anything with ATR above $7.50 is skipped -- which selectively
     # drops high-volatility periods and almost all of 2025.
     atr = sig["atr"].reindex(tr["entry_ts"]).to_numpy()
-    lots = (3000 * 0.005) / (2 * atr * 100)
+    lots = (deposit * 0.005) / (2 * atr * 100)
     skipped = int(np.sum(np.asarray(lots < 0.01)))
-    print(f"  model trades the EA would SKIP on min lot: {skipped}"
-          f"  (max tradeable ATR ${(3000*0.005)/(2*100*0.01):.2f})")
+    max_atr = (deposit * 0.005) / (2 * 100 * 0.01)
+    print(f"  min-lot check at ${deposit:,.0f} deposit / 0.5% risk: "
+          f"max tradeable ATR ${max_atr:.2f}, would skip {skipped} model trades")
 
     ok = frac >= TOL_MATCH
     print(f"  -> {'RECONCILED' if ok else 'NOT RECONCILED'} "

@@ -101,23 +101,48 @@ tests_exits.py, tests_monitor.py   23 tests
 | Gate | State |
 |---|---|
 | `ops_rehearsal.py` | **15/15 pass** |
-| EA spec reconciled against the Python model | **pass** â€” 452/452 signals, trades identical (n=315, PF 1.394, E[R] +0.1920) |
-| Strategy Tester reconciliation | **outstanding** â€” run the tester, export deals, `python verify_ea_vs_python.py tester_deals.csv` |
+| Part A — EA spec vs Python model | **PASS** — 452/452 signals, trades identical |
+| Part B — Strategy Tester vs Python model | **PASS** — 320/320 tester entries matched (100%) |
+| Per-bar indicator trace | **PASS** — 100.00% agreement, 0 disagreeing bars of 44,620 |
 
-**Do not attach the EA to a chart until the Strategy Tester gate passes.** Part A of
-`verify_ea_vs_python.py` cannot catch differences in MT5's own indicator maths (iATR seeding,
-iMA warmup) or in fill mechanics.
+Strategy Tester, XAUUSD H1 2018-01-01 to 2025-07-31, $25,000 deposit, 0.5% risk:
+
+| | Tester | Python model |
+|---|---|---|
+| Trades | 320 | 321 |
+| E[R] | **+0.1926** | **+0.1833** |
+| Profit factor | 1.377 | 1.376 |
+| Win rate | 40.0% | 40.2% |
+| Net | +$7,704.88 | — |
+| Max drawdown | 5.74% balance / 9.76% equity | — |
+
+The EA and the backtest are the same strategy. **That is all this establishes.**
+It says nothing about whether the strategy has an edge -- see the verdict in
+`reports/EL_SCOTTO_IMPROVED.md`, which is unchanged: the entry signal is
+statistically indistinguishable from random timing out of sample (z = +0.37).
 
 ### Bugs this verification caught
 
-1. **The regime streak was counted in the wrong place.** The EA advanced the ATR-expansion
-   streak *after* the session/position/cap gates, so it counted "consecutive in-session bars
-   with no open position" rather than consecutive volatility-expansion bars â€” a different gate
-   from the validated one. Found by spec reconciliation, not by testing.
-2. **Stop distance measured from the wrong side.** A long's stop distance is measured by the
-   broker from **bid** (where the position closes), not ask. `ops_rehearsal.py` had the same bug
-   and passed for months, then failed with retcode 10016 the moment the spread widened to 39
-   points near rollover. Both are fixed.
+Five, none of which any backtest could have surfaced:
+
+1. **MT5's `iATR` is an SMA of True Range, not Wilder's smoothed average.** It ran 7-16% high on
+   44,607 of 44,620 bars. ATR drives the stop, the trail, the position size *and* the regime
+   gate, so the EA was trading ~10% wider stops and ~10% smaller positions than anything
+   validated. Replaced with `WilderATR()`.
+2. **The regime streak was counted in the wrong place** — after the session/position/cap gates,
+   so it counted "consecutive in-session bars with no open position" rather than consecutive
+   volatility-expansion bars.
+3. **The session was gated on the fill bar, not the signal bar.** The EA traded signals from
+   11:00-14:59 while the validated window is 12:00-15:59.
+4. **Stop distance was measured from the wrong side.** A long's stop distance is measured from
+   **bid**; `ops_rehearsal.py` had the same bug and passed for months, then failed with retcode
+   10016 once the spread widened to 39 points near rollover.
+5. **The trace file was written to each tester agent's private sandbox.** `FILE_COMMON` was
+   needed; without it the file is effectively unfindable.
+
+The per-bar trace (`Debug_Log_Signals` + `compare_trace.py`) is what found #1, after four
+rounds of inference from trade lists alone produced four wrong hypotheses. Reach for it first
+next time.
 
 ## Safety
 
