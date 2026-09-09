@@ -11,3 +11,5 @@ el-scotto-review/
 *_results.json
 
 reports/elscotto_trace_*.csv
+
+reports/live/
