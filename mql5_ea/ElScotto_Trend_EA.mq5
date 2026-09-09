@@ -39,9 +39,15 @@ input double Max_Cost_Ratio       = 0.20;  // skip setups where spread exceeds t
 input int    Slippage_Points      = 30;
 input double Max_Leverage         = 50.0;  // cap notional at this multiple of equity
 input bool   Require_Demo_Account = true;  // hard rail; leave true
+//--- Diagnostics. Writes one CSV row per bar (time, indicators, gates, signal)
+//--- to MQL5/Files so a Strategy Tester run can be reconciled against the
+//--- Python model VALUE BY VALUE. Inference from trade lists alone took this
+//--- project through four wrong hypotheses; a trace settles it in one run.
+input bool   Debug_Log_Signals    = false;
 input int    MagicNumber          = 20260908;
 
 int atrHandle, atrDailyDummy, emaHandle, smaDailyHandle;
+int dbgHandle = INVALID_HANDLE;
 datetime lastBarTime = 0;
 int      regimeStreak = 0;
 //--- per-position trail state. entryAtr is FROZEN at entry: the trail must use
@@ -89,6 +95,16 @@ int OnInit()
       Print("Failed to create indicator handles");
       return INIT_FAILED;
    }
+   if(Debug_Log_Signals)
+   {
+      string fn = StringFormat("elscotto_trace_%s.csv", _Symbol);
+      dbgHandle = FileOpen(fn, FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
+      if(dbgHandle == INVALID_HANDLE)
+         PrintFormat("Could not open %s for trace logging (err %d)", fn, GetLastError());
+      else
+         FileWrite(dbgHandle, "bar_time", "close", "high", "low", "atr",
+                   "atr_sma", "streak", "ema", "trend_sma", "in_session", "side");
+   }
    equityAtDayStart = AccountInfoDouble(ACCOUNT_EQUITY);
    RecoverPositionState();
    return INIT_SUCCEEDED;
@@ -99,6 +115,7 @@ void OnDeinit(const int reason)
    IndicatorRelease(atrHandle);
    IndicatorRelease(emaHandle);
    IndicatorRelease(smaDailyHandle);
+   if(dbgHandle != INVALID_HANDLE) { FileClose(dbgHandle); dbgHandle = INVALID_HANDLE; }
 }
 
 bool IsNewBar()
@@ -296,6 +313,33 @@ void OnTick()
    for(int i = 1; i <= ATR_SMA_Period; i++) atrSum += atrVals[i];
    double atrSma = atrSum / ATR_SMA_Period;
    if(atrNow > atrSma) regimeStreak++; else regimeStreak = 0;
+
+   //--- TRACE: written for EVERY bar, before any gate, so the Python model can
+   //--- be reconciled value by value rather than inferred from the trade list.
+   if(dbgHandle != INVALID_HANDLE)
+   {
+      MqlDateTime td;
+      TimeToStruct(iTime(_Symbol, PERIOD_CURRENT, 1), td);
+      int uh = (int)(td.hour - Server_UTC_Offset_Hours);
+      if(uh < 0) uh += 24; if(uh > 23) uh -= 24;
+      bool insess = (uh >= Session_Start_Hour_UTC && uh < Session_End_Hour_UTC);
+      double dc = iClose(_Symbol, PERIOD_CURRENT, 1);
+      double dh = iHigh(_Symbol, PERIOD_CURRENT, 1);
+      double dl = iLow(_Symbol, PERIOD_CURRENT, 1);
+      int dside = 0;
+      if(ema > 0 && trend > 0 && regimeStreak >= Regime_Confirm_Bars && insess)
+      {
+         if(dc > trend && dl < ema && dc > ema)      dside = 1;
+         else if(dc < trend && dh > ema && dc < ema) dside = -1;
+      }
+      FileWrite(dbgHandle,
+                TimeToString(iTime(_Symbol, PERIOD_CURRENT, 1), TIME_DATE|TIME_MINUTES),
+                DoubleToString(dc, 3), DoubleToString(dh, 3), DoubleToString(dl, 3),
+                DoubleToString(atrNow, 5), DoubleToString(atrSma, 5),
+                IntegerToString(regimeStreak), DoubleToString(ema, 5),
+                DoubleToString(trend, 5), (insess ? "1" : "0"),
+                IntegerToString(dside));
+   }
 
    //--- daily rollover, counters and the loss kill switch
    MqlDateTime dt;
