@@ -105,12 +105,15 @@ int OnInit()
       //--- in one place: ...\MetaQuotes\Terminal\Common\Files.
       dbgHandle = FileOpen(fn, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
       if(dbgHandle == INVALID_HANDLE)
+      {
          PrintFormat("Could not open %s for trace logging (err %d)", fn, GetLastError());
+      }
       else
+      {
          PrintFormat("Trace log written to Common Files: %s", fn);
-      else
          FileWrite(dbgHandle, "bar_time", "close", "high", "low", "atr",
                    "atr_sma", "streak", "ema", "trend_sma", "in_session", "side");
+      }
    }
    equityAtDayStart = AccountInfoDouble(ACCOUNT_EQUITY);
    RecoverPositionState();
